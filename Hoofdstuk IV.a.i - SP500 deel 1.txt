@@ -1,0 +1,192 @@
+# In dit document maake ik een dataset van alle ondernemingen in de SP500  en hun dual class status middels CapitalIQ.
+
+# Variabelen capitalIQ: gvkey, companyname, periodenddate, componentid, capitalstructuredescription, capitalstructuresubtypeid, votingrightstypeid, inactivedate, startdate, votingrights, securityid, dataitemvalue
+
+import os
+import pandas as pd
+from datetime import datetime
+from collections import defaultdict
+from datetime import datetime
+
+
+
+
+# OUDE STAPPEN: ik heb gewoon alle CUSIPS in een grote lijst geramd en daarna de gvkey gemerged. Zo kreeg ik een bestand met alle CUSIPs en GVKEYs per jaar in de SP500.
+base_dir = r"D:\Erasmus Universiteit\Jaar 5\Blok 5\Scriptie OR\DATA\Hoofdstuk 3\Deel 1 - Listed shares\VS - SP500 HISTORICAL\Each year"
+cusip_data = {"cusip": [], "year": []}
+
+for folder_name in os.listdir(base_dir):
+    folder_path = os.path.join(base_dir, folder_name)
+    if os.path.isdir(folder_path):
+        file_path = os.path.join(folder_path, f"{folder_name}_CUSIP.txt")
+        if os.path.isfile(file_path):
+            with open(file_path, "r") as file:
+                for line in file:
+                    cusip = line.strip().zfill(9)  # Pad to 9 digits with leading zeroes
+                    if cusip:
+                        cusip_data["cusip"].append(cusip)
+                        cusip_data["year"].append(folder_name)
+
+data = pd.DataFrame(cusip_data)
+
+data['cusip'].drop_duplicates().to_csv("unique_cusips_from_data.txt", index=False, header=False)
+
+
+
+
+
+# OUDE STAPPEN: Link between cusip and gvkey
+link_df = pd.read_excel(
+    r"D:\Erasmus Universiteit\Jaar 5\Blok 5\Scriptie OR\DATA\Hoofdstuk 3\Deel 1 - Listed shares\VS - SP500 HISTORICAL\Dataset obv Capital Structure\gvkeylink.xlsx",
+    dtype={'CUSIP': str, "Standard and Poor's Identifier": str}
+)
+
+link_df = link_df.rename(columns={
+    'CUSIP': 'cusip',
+    "Standard and Poor's Identifier": 'gvkey'
+})
+
+link_df = link_df.drop_duplicates(subset='cusip', keep='first')
+data = data.merge(link_df[['cusip', 'gvkey']], on='cusip', how='left')
+
+data.to_excel(r"D:\Your\Preferred\Folder\data_updated.xlsx", index=False)
+
+
+# OUDE STAP: alle cusips uit data nu in een bestand zodat ik daarmee uit CapitalIQ kon halen
+data['cusip'].dropna().drop_duplicates().to_csv("unique_cusips.txt", index=False, header=False)
+
+
+
+
+
+
+
+
+
+# MAKKELIJKERE WEG:
+data = pd.read_excel(r"D:\Erasmus Universiteit\Jaar 5\Blok 5\Scriptie OR\DATA\Hoofdstuk 3\Deel 1 - Listed shares\VS - SP500 HISTORICAL\Dataset obv Capital Structure\\data_with_gvkeys.xlsx", dtype={'cusip': str, 'gvkey': str})
+
+
+
+# Loading governance
+governance = pd.read_excel(r"D:\Erasmus Universiteit\Jaar 5\Blok 5\Scriptie OR\DATA\Hoofdstuk 3\Deel 1 - Listed shares\VS - SP500 HISTORICAL\Dataset obv Capital Structure\governance.xlsx")
+
+# Renaming and deleting
+governance = governance.drop(columns=[
+    'Company ID',
+    'Flag at the Company Level: 0. Intermediate Filing, 1. As First Reported, 2. Last Filing, 3. Only One Available Filing',
+    'Detailed Description of Equity Type',
+    'Voting Rights',
+    'Voting Rights Type ID',
+    'Shares'
+])
+
+governance = governance.rename(columns={
+    'GVKEY': 'gvkey',
+    'Company Name': 'name',
+    'Ending Date of the Financial Reporting Period': 'reporting_end_date',
+    'Unique Identifier for Each Equity Issue': 'equity_ID',
+    'Inactivation Date': 'inactivation_date',
+    'Start Date': 'start_date',
+    'Security ID': 'security_ID',
+    'Equity Type ID': 'type_of_security'
+})
+
+
+
+
+# Reshaping the data
+governance['reporting_end_date'] = pd.to_datetime(governance['reporting_end_date'], errors='coerce')
+governance['inactivation_date'] = pd.to_datetime(governance['inactivation_date'], errors='coerce')
+governance['start_date'] = pd.to_datetime(governance['start_date'], errors='coerce')
+governance['gvkey'] = pd.to_numeric(governance['gvkey'], errors='coerce') \
+                          .dropna().astype(int).astype(str).str.zfill(6)
+
+
+# Keeping only common stock
+governance = governance[governance['type_of_security'] == 10]
+
+
+
+
+# AANPASSEN LIBRARY 'DATA' MET DUAL CLASS INFO - 1 year looking back window
+flags = []
+for i, row in data.iterrows():
+    year = int(row['year'])
+    gvkey = row['gvkey']
+    start_date = datetime(year - 1, 1, 1)
+    end_date = datetime(year, 12, 31)
+    subset = governance[
+        governance['reporting_end_date'].notna() &
+        (governance['reporting_end_date'] >= start_date) &
+        (governance['reporting_end_date'] <= end_date) &
+        ((governance['inactivation_date'].isna()) | (governance['inactivation_date'] > end_date)) &
+        ((governance['start_date'].isna()) | (governance['start_date'] <= end_date))
+    ]
+    matched = subset[subset['gvkey'] == gvkey]
+    is_dual = matched['equity_ID'].nunique() > 1
+    flags.append(int(is_dual))
+
+data['dual_class'] = flags
+
+
+
+
+
+
+# Exporting the final database based on CapitalIQ that includes year, gvkey, cusip and dual class
+data.to_excel("CapitalIQ_database_dual_class.xlsx", index=False)
+
+
+
+
+
+
+
+
+
+
+
+
+
+# TEST: WELKE WINDOW IS HET BESTE?
+lookback_windows = [1, 2, 3, 5, 10, 15, 50]
+dual_class_lookup = defaultdict(dict)
+for window in lookback_windows:
+    for year in data['year'].unique():
+        start_date = datetime(year - window, 1, 1)
+        end_date = datetime(year, 12, 31)
+        subset = governance[
+            governance['reporting_end_date'].notna() &
+            (governance['reporting_end_date'] >= start_date) &
+            (governance['reporting_end_date'] <= end_date) &
+            ((governance['inactivation_date'].isna()) | (governance['inactivation_date'] > end_date)) &
+            ((governance['start_date'].isna()) | (governance['start_date'] <= end_date))
+        ]
+        grouped = subset.groupby('gvkey')['equity_ID'].nunique()
+        for gvkey, count in grouped.items():
+            dual_class_lookup[window][(gvkey, year)] = int(count > 1)
+
+
+for window in lookback_windows:
+    colname = f'dual_class_{window}y'
+    data[colname] = data.apply(
+        lambda row: dual_class_lookup[window].get((row['gvkey'], row['year']), 0),
+        axis=1
+    )
+
+summary = []
+for col in [c for c in data.columns if c.startswith('dual_class_')]:
+    temp = data.groupby('year')[col].mean().reset_index()
+    temp.columns = ['year', f'{col}_pct']
+    summary.append(temp)
+
+summary_df = summary[0]
+for df in summary[1:]:
+    summary_df = summary_df.merge(df, on='year', how='outer')
+
+summary_df.to_excel("dual_class_comparison_by_window.xlsx", index=False)
+
+
+
+

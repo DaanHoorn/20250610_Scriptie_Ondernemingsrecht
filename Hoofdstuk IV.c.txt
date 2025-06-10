@@ -1,0 +1,256 @@
+# Variabelen Compustat: cik, fic, loc, fyear, ggroup, gind, gsector, gsubind, revt, lt, at, ib
+# Jaren: 2008-04/2025
+# Variabelen CapitalIQ: gvkey, companyname, periodenddate, componentid, capitalstructuredescription, capitalstructuresubtypeid, votingrightstypeid, inactivedate, startdate, votingrights, securityid, dataitemvalue
+# Jaren: begin tot einde database
+
+
+import pandas as pd
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+
+
+
+
+
+
+compustat = pd.read_excel('D:\\Erasmus Universiteit\\Jaar 5\\Blok 5\\Scriptie OR\\DATA\\Hoofdstuk 3\\Deel 3 - KMO\\python\\compustat.xlsx')
+
+# Dropping unnecessary columns
+columns_to_drop = [
+    'Industry Format',
+    'Level of Consolidation - Company Annual Descriptor',
+    'Population Source',
+    'Data Format',
+    'Active/Inactive Status Marker',
+    'CIK Number',
+    'Data Date'
+]
+
+compustat = compustat.drop(columns=columns_to_drop)
+
+# Renaming
+compustat = compustat.rename(columns={
+    'Global Company Key': 'gvkey',
+    'Data Year - Fiscal': 'year',
+    'Ticker Symbol': 'ticker',
+    'CUSIP': 'cusip',
+    'Company Name': 'name',
+    'ISO Currency Code': 'currency',
+    'Assets - Total': 'assets',
+    'Income Before Extraordinary Items': 'income',
+    'Liabilities - Total': 'liabilities',
+    'Revenue - Total': 'revenue',
+    'Current ISO Country Code - Incorporation': 'incorporation',
+    'Current ISO Country Code - Headquarters': 'HQ'
+})
+
+
+# Missing data
+compustat = compustat.dropna(subset=['year', 'revenue', 'assets', 'liabilities', 'income', 'incorporation', 'HQ'])
+
+# Data from 2010-2024
+compustat['year'] = compustat['year'].astype(int)
+compustat = compustat[(compustat['year'] >= 2010) & (compustat['year'] <= 2024)]
+
+# KMO's and filtering for less than 100K in assets & 0 in revenue
+compustat = compustat[(compustat['assets'] >= 0.1) & (compustat['assets'] <= 50.8146)]
+compustat = compustat[compustat['revenue'] != 0]
+
+# Only HQ and incorporation in USA and currency in US
+compustat = compustat[(compustat['HQ'] == 'USA') & 
+                      (compustat['incorporation'] == 'USA') & 
+                      (compustat['currency'] == 'USD')]
+
+# Removing all duplicates from compustat with gvkey & year similar
+compustat = compustat.drop_duplicates(subset=['gvkey', 'year'])
+
+# Storing gvkey as string with zeroes in front
+compustat['gvkey'] = compustat['gvkey'].astype(str).str.zfill(6)
+
+
+
+
+
+
+
+# Unique list with gvkeys
+compustat['gvkey'].unique().tofile('unique_gvkeys.txt', sep='\n', format='%s')
+
+
+
+
+
+
+
+# Governance
+governance = pd.read_excel('D:\\Erasmus Universiteit\\Jaar 5\\Blok 5\\Scriptie OR\\DATA\\Hoofdstuk 3\\Deel 3 - KMO\\python\\governance.xlsx')
+
+# Renaming and deleting
+governance = governance.drop(columns=[
+    'Company ID',
+    'Flag at the Company Level: 0. Intermediate Filing, 1. As First Reported, 2. Last Filing, 3. Only One Available Filing',
+    'Detailed Description of Equity Type',
+    'Voting Rights',
+    'Voting Rights Type ID',
+    'Shares'
+])
+
+governance = governance.rename(columns={
+    'GVKEY': 'gvkey',
+    'Company Name': 'name',
+    'Ending Date of the Financial Reporting Period': 'reporting_end_date',
+    'Unique Identifier for Each Equity Issue': 'equity_ID',
+    'Inactivation Date': 'inactivation_date',
+    'Start Date': 'start_date',
+    'Security ID': 'security_ID',
+    'Equity Type ID': 'type_of_security'
+})
+
+
+
+
+# Reshaping the data
+governance['reporting_end_date'] = pd.to_datetime(governance['reporting_end_date'], errors='coerce')
+governance['inactivation_date'] = pd.to_datetime(governance['inactivation_date'], errors='coerce')
+governance['start_date'] = pd.to_datetime(governance['start_date'], errors='coerce')
+governance['gvkey'] = pd.to_numeric(governance['gvkey'], errors='coerce') \
+                          .dropna().astype(int).astype(str).str.zfill(6)
+
+
+# Keeping only common stock
+governance = governance[governance['type_of_security'] == 10]
+
+
+
+# Definitive output - assets above 100K (dit is nu die excel)
+results = []
+governance_yearly = {}
+
+for year in range(2010, 2025):
+    gvkeys_year = compustat[compustat['year'] == year]['gvkey'].unique()
+    governance_yearly[year] = governance[governance['gvkey'].isin(gvkeys_year)].copy()
+
+for year in range(2010, 2025):
+    df = governance_yearly[year]
+    report_start_inclusion_date = datetime(year - 2, 1, 1)
+    cutoff = datetime(year, 12, 31)
+    df = df[df['reporting_end_date'].notna()]
+    df = df[df['reporting_end_date'] >= report_start_inclusion_date]
+    df = df[df['reporting_end_date'] <= cutoff]
+    df = df[(df['inactivation_date'].isna()) | (df['inactivation_date'] > cutoff)]
+    df = df[(df['start_date'].isna()) | (df['start_date'] <= cutoff)]
+    df = df.drop_duplicates(subset=['equity_ID', 'gvkey'])
+    governance_yearly[year] = df
+    firm_counts = df['gvkey'].value_counts()
+    single_class = (firm_counts == 1).sum()
+    dual_class = (firm_counts > 1).sum()
+    total_firms = single_class + dual_class
+    dual_class_percentage = (dual_class / total_firms) * 100 if total_firms > 0 else 0
+    results.append({
+        'year': year,
+        'single_class': single_class,
+        'dual_class': dual_class,
+        'total_firms': total_firms,
+        'dual_class_percentage': dual_class_percentage
+    })
+
+results_df = pd.DataFrame(results)
+results_df.to_excel('2_dual_class_firm_stats.xlsx', index=False)
+
+
+
+
+
+
+
+
+
+# Definitive output - assets above 1 mil
+compustat_big = compustat[compustat['assets'] >= 1]
+results = []
+governance_yearly = {}
+
+for year in range(2010, 2025):
+    gvkeys_year = compustat_big[compustat_big['year'] == year]['gvkey'].unique()
+    governance_yearly[year] = governance[governance['gvkey'].isin(gvkeys_year)].copy()
+
+for year in range(2010, 2025):
+    df = governance_yearly[year]
+    report_start_inclusion_date = datetime(year - 2, 1, 1)
+    cutoff = datetime(year, 12, 31)
+    df = df[df['reporting_end_date'].notna()]
+    df = df[df['reporting_end_date'] >= report_start_inclusion_date]
+    df = df[df['reporting_end_date'] <= cutoff]
+    df = df[(df['inactivation_date'].isna()) | (df['inactivation_date'] > cutoff)]
+    df = df[(df['start_date'].isna()) | (df['start_date'] <= cutoff)]
+    df = df.drop_duplicates(subset=['equity_ID', 'gvkey'])
+    governance_yearly[year] = df
+    firm_counts = df['gvkey'].value_counts()
+    single_class = (firm_counts == 1).sum()
+    dual_class = (firm_counts > 1).sum()
+    total_firms = single_class + dual_class
+    dual_class_percentage = (dual_class / total_firms) * 100 if total_firms > 0 else 0
+    results.append({
+        'year': year,
+        'single_class': single_class,
+        'dual_class': dual_class,
+        'total_firms': total_firms,
+        'dual_class_percentage': dual_class_percentage
+    })
+
+results_df = pd.DataFrame(results)
+results_df.to_excel('2_dual_class_firm_stats.xlsx', index=False)
+
+
+
+
+
+# New library with compustat and governance merged
+date_cols = ['reporting_end_date', 'inactivation_date', 'start_date']
+governance[date_cols] = governance[date_cols].apply(pd.to_datetime, errors='coerce')
+
+KMO_rows = []
+
+for year in range(2010, 2025):
+    gvkeys_year = compustat[compustat['year'] == year]['gvkey'].unique()
+    df = governance[governance['gvkey'].isin(gvkeys_year)].copy()
+    report_start_inclusion_date = datetime(year - 3, 1, 1)
+    cutoff = datetime(year, 12, 31)
+    df = df[df['reporting_end_date'].notna()]
+    df = df[df['reporting_end_date'] >= report_start_inclusion_date]
+    df = df[df['reporting_end_date'] <= cutoff]
+    df = df[(df['inactivation_date'].isna()) | (df['inactivation_date'] > cutoff)]
+    df = df[(df['start_date'].isna()) | (df['start_date'] <= cutoff)]
+    df = df.drop_duplicates(subset=['equity_ID', 'gvkey'])
+    equity_counts = df.groupby('gvkey')['equity_ID'].nunique()
+    dual_gvkeys = equity_counts[equity_counts > 1].index
+    single_gvkeys = equity_counts[equity_counts == 1].index
+    compustat_year = compustat[compustat['year'] == year]
+    dual_rows = compustat_year[compustat_year['gvkey'].isin(dual_gvkeys)].copy()
+    dual_rows['dual_class'] = True
+    single_rows = compustat_year[compustat_year['gvkey'].isin(single_gvkeys)].copy()
+    single_rows['dual_class'] = False
+    KMO_rows.append(pd.concat([dual_rows, single_rows], ignore_index=True))
+
+KMO = pd.concat(KMO_rows, ignore_index=True)
+
+
+# Specifieke MVS_gebruik per industry
+KMO_filtered = KMO[KMO['GIC Sectors'].notna()].copy()
+KMO_filtered['GIC Sectors'] = KMO_filtered['GIC Sectors'].astype(int)
+KMO_filtered = KMO_filtered[KMO_filtered['GIC Sectors'].isin([30, 50, 55])]
+
+sector_dual_counts = (
+    KMO_filtered.groupby(['year', 'GIC Sectors'])['dual_class']
+    .agg(dual_class_firms='sum', total_firms='count')
+    .reset_index()
+    .sort_values(by=['GIC Sectors', 'year'])
+)
+
+sector_dual_counts['dual_class_percentage'] = (
+    sector_dual_counts['dual_class_firms'] / sector_dual_counts['total_firms']
+) * 100
+
+print(sector_dual_counts)
+
+sector_dual_counts.to_excel('dual_class_percentage_by_sector.xlsx', index=False)

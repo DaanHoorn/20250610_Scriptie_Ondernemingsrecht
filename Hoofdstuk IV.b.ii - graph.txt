@@ -1,0 +1,54 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+data = pd.read_excel('D:\\Erasmus Universiteit\\Jaar 5\\Blok 5\\Scriptie OR\\DATA\\Hoofdstuk 3\\Deel 2 - IPOs\\EU IPO\\Pogign 2 - correct\\with_italy.xlsx')
+
+
+# Round down the year to the nearest even number to group in 2-year intervals
+data['year_bin'] = (data['year'] // 3) * 3
+
+# Group by the 2-year bins and calculate the average percentage
+smoothed = data.groupby('year_bin', as_index=False)['percentage'].mean()
+
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.size": 12
+})
+
+# Create figure and axis
+fig, ax = plt.subplots(figsize=(10, 6))
+
+# Fill area under percentage
+ax.fill_between(
+    smoothed["year_bin"],
+    smoothed["percentage"],
+    0,
+    color='gray',
+    alpha=0.5,
+    label="_nolegend_",
+    zorder=1
+)
+
+# Plot the smoothed percentage line
+ax.plot(smoothed["year_bin"], smoothed["percentage"], color='black', linewidth=2.5, label="Total", zorder=2)
+
+
+# Format axes
+ax.set_ylabel("Dual Class Share (%)", fontsize=13)
+ax.set_xlabel("")  # No x-axis label
+ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+ax.xaxis.set_major_locator(MultipleLocator(5))  # Ticks every 5 years
+
+# Clean ticks and frame
+ax.tick_params(axis='both', length=0)
+for spine in ax.spines.values():
+    spine.set_visible(False)
+
+# Grid and legend
+ax.yaxis.grid(True, linestyle='--', alpha=0.5)
+ax.legend(frameon=False, fontsize=11)
+ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+
+# Save and show
+plt.tight_layout()
+plt.savefig("EU_dual_class_plot.pdf")  # Vector output for LaTeX
+plt.show()

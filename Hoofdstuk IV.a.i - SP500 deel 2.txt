@@ -1,0 +1,73 @@
+# In deze code maakte ik de dataset uit ISS ESG die werd aangevuld met de data uit CapitalIQ.
+
+import pandas as pd
+import os
+from pathlib import Path
+
+capitaliq = pd.read_excel(r"D:\Erasmus Universiteit\Jaar 5\Blok 5\Scriptie OR\DATA\Hoofdstuk 3\Deel 1 - Listed shares\VS - SP500 HISTORICAL\Verbeterde database (i) ISS ESG en (ii) Capital Structure\capitaliq.xlsx")
+capitaliq['cusip'] = capitaliq['cusip'].str.zfill(9)
+capitaliq['year'] = capitaliq['year'].astype(int)
+
+
+# Hier maak ik dus een database die bestaat uit ISS ESG maar waar leeg uit CapitalIQ
+folder = Path(r"D:\Erasmus Universiteit\Jaar 5\Blok 5\Scriptie OR\DATA\Hoofdstuk 3\Deel 1 - Listed shares\VS - SP500 HISTORICAL\Verbeterde database (i) ISS ESG en (ii) Capital Structure\Oude bestanden MVS")
+
+isseg_list = []
+for file in folder.glob("MVS_*.xlsx"):
+    df = pd.read_excel(file, dtype=str)
+    df = df[['CUSIP (cusip)', 'Year (year)', 'Dual Class Stock (dualclass)']]
+    df.columns = ['cusip', 'year', 'dualclass']
+    df['cusip'] = df['cusip'].str.zfill(9)
+    df['year'] = df['year'].astype(int)
+    df['dualclass'] = df['dualclass'].fillna('no').str.lower().map({'yes': 1, 'no': 0})
+    isseg_list.append(df)
+
+isseg = pd.concat(isseg_list, ignore_index=True)
+
+merged = capitaliq.merge(
+    isseg[['cusip', 'year', 'dualclass']],
+    on=['cusip', 'year'],
+    how='left',
+    suffixes=('', '_isseg')
+)
+
+merged['dual_class'] = merged['dualclass'].combine_first(merged['dual_class'])
+
+merged = merged.drop(columns=['dualclass'])
+
+
+
+# Exporting a summary of the new dataframe
+summary = (
+    merged.groupby('year')
+    .apply(lambda df: pd.Series({
+        'dual_class_count': (df['dual_class'] == 1).sum(),
+        'total_count': len(df),
+        'dual_class_percent': (df['dual_class'] == 1).mean() * 100
+    }))
+    .reset_index()
+)
+
+summary.to_excel('FINAL_DATABASE_dual_class_summary_per_year.xlsx', index=False)
+
+
+# Exporting a summary of the only CapitalIQ dataframe
+summary = (
+    capitaliq.groupby('year')
+    .apply(lambda df: pd.Series({
+        'dual_class_count': (df['dual_class'] == 1).sum(),
+        'total_count': len(df),
+        'dual_class_percent': (df['dual_class'] == 1).mean() * 100
+    }))
+    .reset_index()
+)
+
+summary.to_excel('CAPITAL_IQ_dual_class_summary_per_year.xlsx', index=False)
+
+# Export if needed
+merged.to_excel("final_merged_dual_class.xlsx", index=False)
+
+
+
+
+

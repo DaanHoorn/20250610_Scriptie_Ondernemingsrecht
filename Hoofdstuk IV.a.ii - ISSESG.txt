@@ -1,0 +1,232 @@
+# Data
+# Compustat North America: Global Company Key, Data Year - Fiscal, Ticker Symbol, CUSIP, Company Name, ISO Currency Code, Assets – Total, Employees, Income Before Extraordinary Items, Liabilities - Total, Revenue - Total, Active/Inactive Status Marker, Current ISO Country Code - Incorporation, GIC Industries, GIC subindustries, GIC sectors, Current ISO Country Code - Headquarters
+
+# Zie andere bestand poging 1 (code.rtf oid)
+
+# ISS ESG: CUSIP, Dual Class
+
+
+
+
+
+
+
+import pandas as pd
+from scipy.stats.mstats import winsorize
+import statsmodels.api as sm
+import numpy as np
+import statsmodels.api as sm
+
+
+
+# Data inladen
+compustat = pd.read_excel('D:\\Erasmus Universiteit\\Jaar 5\\Blok 5\\Scriptie OR\\DATA\\Hoofdstuk 3\\Deel 1 - Listed shares\\Python - Annual\\Poging 2\\Compustat.xlsx')
+governance = pd.read_excel('D:\\Erasmus Universiteit\\Jaar 5\\Blok 5\\Scriptie OR\\DATA\\Hoofdstuk 3\\Deel 1 - Listed shares\\Python - Annual\\Poging 2\\Governance.xlsx')
+
+governance = governance.rename(columns={'Dual Class Stock (dualclass)': 'dualclass'})
+governance['dualclass'] = governance['dualclass'].fillna('no')
+governance = governance.rename(columns={'Year (year)': 'year'})
+compustat = compustat.rename(columns={'Data Year - Fiscal': 'year'})
+compustat = compustat.rename(columns={'CUSIP': 'cusip'})
+governance = governance.rename(columns={'CUSIP (cusip)': 'cusip'})
+compustat['cusip'] = compustat['cusip'].astype(str)
+governance['cusip'] = governance['cusip'].astype(str)
+
+
+
+# Step 1.1: Drop rows where 'year' is missing and convert 'year' to integer
+compustat = compustat.dropna(subset=['year'])
+governance = governance.dropna(subset=['year'])
+compustat['year'] = compustat['year'].astype(int)
+governance['year'] = governance['year'].astype(int)
+
+
+# Step 1.2: removing any year other than 2010-2024
+compustat = compustat[(compustat['year'] >= 2010) & (compustat['year'] <= 2024)]
+governance = governance[(governance['year'] >= 2010) & (governance['year'] <= 2024)]
+
+# Step 2: MERGE
+merged = pd.merge(
+    compustat, 
+    governance[['cusip', 'year', 'dualclass']], 
+    on=['cusip', 'year'], 
+    how='left' 
+)
+
+ 
+# Step 3: data filtering
+# Remove if no dualclass var
+merged = merged.dropna(subset=['dualclass'])
+
+# Remove from merged if no assets – total
+merged = merged.rename(columns={'Assets - Total': 'assets'})
+merged = merged.dropna(subset=['assets'])
+	
+# Remove if no liabilities – total
+merged = merged.rename(columns={'Liabilities - Total': 'liabilities'})
+merged = merged.dropna(subset=['liabilities'])
+
+# Remove from merged if no revenue stat 
+merged = merged.rename(columns={'Revenue – Total': 'revenue'})
+merged = merged.dropna(subset=['revenue'])
+
+# Remove from merged if no income before extraordinary items
+merged = merged.rename(columns={'Income Before Extraordinary Items': 'income'})
+merged = merged.dropna(subset=['income'])
+
+# Remove from merged if no USD as currency
+merged = merged.rename(columns={'ISO Currency Code': 'currency'})
+merged = merged[merged['currency'] == 'USD']
+
+# Remove from merged if not in US incorporated
+merged = merged.rename(columns={'Current ISO Country Code - Incorporation': 'country'})
+merged = merged[merged['country'] == 'USA']
+
+# Remove from merged if HQ not in US 
+merged = merged.rename(columns={'Current ISO Country Code - Headquarters': 'HQ'})
+merged = merged[merged['HQ'] == 'USA']
+
+# Dropping all of these vars
+merged = merged.drop(columns=['currency'])
+merged = merged.drop(columns=['country'])
+merged = merged.drop(columns=['HQ'])
+
+# Remove unnecessary variables
+merged = merged.drop(columns=['Level of Consolidation - Company Annual Descriptor', 'Population Source', 'Data Format', 'Active/Inactive Status Marker', 'Standard Industrial Classification - Historical', 'Data Date', 'Industry Format'])
+
+
+
+# Stap 4: VARS
+# Industry_groups
+merged['GIC Groups'] = merged['GIC Groups'].astype(int).astype(str)
+merged['GIC Industries'] = merged['GIC Industries'].astype(int).astype(str)
+merged['GIC Sectors'] = merged['GIC Sectors'].astype(int).astype(str)
+merged['GIC Sub-Industries'] = merged['GIC Sub-Industries'].astype(int).astype(str)
+
+industry_map = {
+    '10': 'Energy',
+    '15': 'Materials',
+    '20': 'Industrials',
+    '25': 'Consumer Discretionary',
+    '30': 'Consumer Staples',
+    '35': 'Health Care',
+    '40': 'Financials',
+    '45': 'Information Technology',
+    '50': 'Communication Services',
+    '55': 'Utilities',
+    '60': 'Real Estate'
+}
+
+merged['industry_group'] = merged['GIC Sectors'].astype(str).map(industry_map)
+
+# ROE
+merged['equity'] = merged['assets'] - merged['liabilities']
+merged['ROE'] = merged['income'] / merged['equity']
+merged['ROE_winsorized'] = winsorize(merged['ROE'], limits=[0.01, 0.01])
+
+# Market cap
+# With CUSIP from Compustat Fundamentals Annual with CRSP Stock Monthly: DATAPOINTS: cusip; prcc_f (Price close – Annual - Fiscal); csho (Shares Outstanding); fyear (Data Year – Fiscal)
+marketcap = pd.read_excel('D:\\Erasmus Universiteit\\Jaar 5\\Blok 5\\Scriptie OR\\DATA\\Hoofdstuk 3\\Deel 1 - Listed shares\\Python - Annual\\market_cap.xlsx')
+marketcap = marketcap.rename(columns={'CUSIP': 'cusip'})
+marketcap = marketcap.rename(columns={'Data Year - Fiscal': 'year'})
+
+# Delete duplicates
+marketcap = marketcap.drop_duplicates(subset=['cusip', 'year'])
+
+# Drop 2008-2009
+marketcap = marketcap[~marketcap['year'].isin([2008, 2009])]
+
+# Keep only relevant vars
+marketcap = marketcap[['year', 'cusip', 'marketcap']]
+
+# Merging market cap and merged
+merged = pd.merge(
+    merged,
+    marketcap,
+    on=['cusip', 'year'],
+    how='left'
+)
+
+merged = merged.dropna(subset=['marketcap'])
+
+# Removing duplicates in merged
+merged = merged.drop_duplicates(subset=['cusip', 'year'])
+
+
+# Stap 5: Summary statistics
+summary = merged.groupby('year').agg(
+    avg_roe=('ROE', 'mean'),
+    pct_dualclass_yes=('dualclass', lambda x: (x.str.lower() == 'yes').mean() * 100),
+    observations=('ROE', 'count')
+).reset_index()
+
+summary.to_excel('yearly_summary.xlsx', index=False)
+
+
+# Stap 6: Regression
+# Independent variables: ROE, industry_group and marketcap
+# Dependent variable: dual_dummy
+
+# Dummy variable
+merged['dual_dummy'] = merged['dualclass'].str.upper().eq('YES').astype(int)
+
+# dummy-code the categorical industry
+merged = pd.concat([merged, pd.get_dummies(merged['industry_group'], drop_first=False)], axis=1)
+
+# logarithmic variable for market cap
+merged['ln_marketcap'] = np.log1p(merged['marketcap'])
+ 
+# Manually define the industry dummy columns
+industry_cols = [
+    'Communication Services',
+    'Consumer Discretionary',
+    'Consumer Staples',
+    'Energy',
+    'Financials',
+    'Health Care',
+    'Information Technology',
+    'Materials',
+    'Real Estate',
+    'Utilities'
+]
+
+y = merged['dual_dummy']
+
+# Combine predictors and dummies into X
+X = pd.concat([merged[['ROE', 'ln_marketcap']], merged[industry_cols]], axis=1)
+# Add constant
+X = sm.add_constant(X)
+X = X.astype(float)
+
+model = sm.Logit(y, X)
+result = model.fit(cov_type='cluster', cov_kwds={'groups': merged.loc[X.index, 'Global Company Key']})
+print(result.summary())
+
+
+
+ 
+# STAP 7: Presentatie van regressie
+# Odds ratios and CI
+odds_ratios = np.exp(result.params)
+conf_int = np.exp(result.conf_int())
+conf_int.columns = ['CI Lower', 'CI Upper']
+
+# Combine into a clean table
+summary_table = pd.concat([odds_ratios, conf_int, result.pvalues], axis=1)
+summary_table.columns = ['Odds Ratio', 'CI Lower', 'CI Upper', 'P-Value']
+summary_table.to_excel('logit_summary.xlsx', index=True)
+
+
+
+
+# Stap 8: Verdere analyse bepaalde industrieën
+merged['period'] = pd.cut(
+    merged['year'],
+    bins=[2009, 2014, 2019, 2024],
+    labels=['2010-2014', '2015-2019', '2020-2024']
+)
+grouped = merged.groupby(['industry_group', 'period']) \
+    .apply(lambda x: (x['dualclass'].str.lower() == 'yes').mean() * 100) \
+    .reset_index(name='Percent Dual Class Yes')
+pivoted = grouped.pivot(index='industry_group', columns='period', values='Percent Dual Class Yes')
+print(pivoted)

@@ -1,0 +1,74 @@
+# Ik heb de juiste landen er al ingezet.
+
+
+
+import pandas as pd
+
+data = pd.read_excel("D:\\Erasmus Universiteit\\Jaar 5\\Blok 5\\Scriptie OR\\DATA\\Hoofdstuk 3\\Deel 2 - IPOs\\EU IPO\\Pogign 2 - correct\\EU IPO.xlsx")
+
+# Dropping observations without dualclass var
+data = data.dropna(subset=['dualclass'])
+
+
+# Counts of values of dualclass.
+data['dualclass'].value_counts()
+
+
+# UITKOMST: 106/1042
+
+
+
+
+
+
+
+
+
+#MAKING A TABLE BUT WITHOUT ITALY BEFORE 2016
+# Dropping observations without year var
+data = data[data['year'] != 1900]
+
+data['dualclass'] = data['dualclass'].astype(float)
+
+#Dummy variable for Italy
+data = data.rename(columns={'Issuer/Borrower Nation': 'country'})
+data['is_italy'] = (data['country'].str.lower() == 'italy').astype(int)
+
+# Exclude Italy observations from 2015 or earlier
+filtered_data = data[~((data['is_italy'] == 1) & (data['year'] <= 2015))]
+
+# Group by year and calculate counts
+summary = filtered_data.groupby('year').agg(
+    total_obs=('dualclass', 'count'),
+    dualclass_1=('dualclass', lambda x: (x == 1.0).sum()),
+    dualclass_0=('dualclass', lambda x: (x == 0.0).sum())
+)
+
+# Calculate the ratio
+summary['ratio_1_to_0'] = summary['dualclass_1'] / summary['dualclass_0']
+
+# Display the result
+summary.to_excel("dualclass_summary.xlsx")
+print(summary)
+
+
+
+
+
+
+
+
+
+
+#MAKING A TABLE BUT WITHOUT ITALY
+data_no_italy = data[data['is_italy'] != 1]
+
+summary_no_italy = data_no_italy.groupby('year').agg(
+    total_obs=('dualclass', 'count'),
+    dualclass_1=('dualclass', lambda x: (x == 1.0).sum()),
+    dualclass_0=('dualclass', lambda x: (x == 0.0).sum())
+)
+
+
+summary_no_italy.to_excel("dualclass_summary_no_italy.xlsx")
+print(summary)
